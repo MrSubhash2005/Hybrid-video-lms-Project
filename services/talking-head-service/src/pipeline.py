@@ -547,7 +547,7 @@ def run_talking_head_pipeline(
     jobs_db[job_id]["status"] = "processing"
     jobs_db[job_id]["progress"] = 10.0
     output_target = _resolve_default_output_path(job_id, output_path)
-    jobs_db[job_id]["output_url"] = output_target
+    jobs_db[job_id]["output_url"] = None
 
     def update_progress(value: float) -> None:
         _normalize_progress(job_id, jobs_db, value)
@@ -584,7 +584,14 @@ def run_talking_head_pipeline(
 
         jobs_db[job_id]["status"] = "completed"
         jobs_db[job_id]["progress"] = 100.0
-        jobs_db[job_id]["output_url"] = str(Path(backend_output).resolve())
+        if Path(backend_output).exists():
+            output_file = Path(backend_output)
+            jobs_db[job_id][
+                "output_url"
+            ] = f"/outputs/{job_id}/outputs/{output_file.name}"
+        else:
+            jobs_db[job_id]["output_url"] = None
+
         jobs_db[job_id]["completed_at"] = (
             datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         )
