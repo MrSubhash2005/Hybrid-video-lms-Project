@@ -1,3 +1,4 @@
+import math
 import subprocess
 from pathlib import Path
 
@@ -79,10 +80,10 @@ def normalize_audio(
     """
     Normalize audio to:
 
-    - MP3
-    - 44.1 kHz
+    - WAV
+    - 16 kHz
     - Mono
-    - 192 kbps
+    - 16-bit
     """
 
     input_file = Path(input_path)
@@ -108,13 +109,11 @@ def normalize_audio(
                 str(input_file),
                 "-vn",
                 "-acodec",
-                "libmp3lame",
+                "pcm_s16le",
                 "-ar",
-                "44100",
+                "16000",
                 "-ac",
                 "1",
-                "-b:a",
-                "192k",
                 str(output_file),
             ],
             capture_output=True,
@@ -139,9 +138,9 @@ def normalize_audio(
         "success": True,
         "input_path": str(input_file),
         "output_path": str(output_file),
-        "format": "mp3",
+        "format": "wav",
         "duration": normalized_info["duration"],
-        "sample_rate": 44100,
+        "sample_rate": 16000,
         "channels": 1,
     }
 
@@ -149,26 +148,31 @@ def normalize_audio(
 def split_audio_into_chunks(
     audio_path: str,
     output_dir: str,
-    chunk_duration: int = 20,
-) -> list[str]:
-    """Split audio into approximately 20-second MP3 chunks."""
+    chunk_duration: int = 10,
+) -> dict:
+    """Split audio into approximately 10-second WAV chunks."""
 
     total_duration = get_audio_duration(audio_path)
+    total_duration_ms = int(total_duration * 1000)
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    if total_duration <= chunk_duration:
-        return [audio_path]
-
-    import math
-
+    chunks_meta = []
     number_of_chunks = math.ceil(total_duration / chunk_duration)
-    chunk_paths = []
 
     for index in range(number_of_chunks):
         start_time = index * chunk_duration
-        chunk_path = output_path / f"chunk_{index}.mp3"
+        chunk_name = f"chunk_{index:04d}.wav"
+        chunk_path = output_path / chunk_name
+
+        # Calculate exact duration for this chunk
+        remaining_duration = total_duration - start_time
+        actual_chunk_duration = min(chunk_duration, remaining_duration)
+
+        start_ms = int(start_time * 1000)
+        duration_ms = int(actual_chunk_duration * 1000)
+        end_ms = start_ms + duration_ms
 
         try:
             subprocess.run(
@@ -180,13 +184,9 @@ def split_audio_into_chunks(
                     "-ss",
                     str(start_time),
                     "-t",
-                    str(chunk_duration),
+                    str(actual_chunk_duration),
                     "-acodec",
-                    "libmp3lame",
-                    "-ar",
-                    "44100",
-                    "-ac",
-                    "1",
+                    "pcm_s16le",
                     str(chunk_path),
                 ],
                 capture_output=True,
@@ -198,6 +198,98 @@ def split_audio_into_chunks(
                 f"Failed to create audio chunk {index}: {exc.stderr}"
             ) from exc
 
-        chunk_paths.append(str(chunk_path))
+        chunks_meta.append(
+            {
+                "index": index,
+                "path": str(chunk_path),
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "duration_ms": duration_ms,
+            }
+        )
 
-    return chunk_paths
+    return {
+        "chunks": chunks_meta,
+        "total_duration_ms": total_duration_ms,
+        "chunk_count": number_of_chunks,
+    }
+
+
+def prepare_audio(
+    input_audio_path: str,
+    job_id: str,
+    output_base_dir: str,
+    chunk_duration_seconds: int = 10,
+) -> dict:
+    """
+    Prepare input audio for the talking-head inference pipeline.
+
+    Validates, normalizes to 16 kHz WAV, and chunks if needed.
+
+    Args:
+        input_audio_path: Path to user-provided audio file
+        job_id: Unique job identifier
+        output_base_dir: Base directory for output (job-specific subdirs will be created)
+        chunk_duration_seconds: Duration of each chunk in seconds (default 10)
+
+    Returns:
+        dict matching AUDIO_INTERFACE.md:
+        {
+            "is_chunked": bool,
+            "normalized_audio_path": str,
+            "total_duration_ms": int,
+            "chunks": [
+                {
+                    "index": int,
+                    "path": str,
+                    "start_ms": int,
+                    "end_ms": int,
+                    "duration_ms": int
+                },
+                ...
+            ]
+        }
+
+    Raises:
+        FileNotFoundError: Input file not found
+        ValueError: Invalid or empty audio file
+        RuntimeError: Normalization or chunking failed
+    """
+
+    # Step 1: Validate input
+    validate_audio_with_ffprobe(input_audio_path)
+
+    # Step 2: Create job-specific output directory
+    job_audio_dir = Path(output_base_dir) / job_id / "audio"
+    job_audio_dir.mkdir(parents=True, exist_ok=True)
+
+    # Step 3: Normalize audio
+    normalized_output_path = str(job_audio_dir / "normalized_audio.wav")
+    normalize_result = normalize_audio(input_audio_path, normalized_output_path)
+
+    # Step 4: Get total duration
+    total_duration_ms = int(normalize_result["duration"] * 1000)
+
+    # Step 5: Chunk if necessary
+    if total_duration_ms <= chunk_duration_seconds * 1000:
+        # Short audio: no chunking
+        return {
+            "is_chunked": False,
+            "normalized_audio_path": normalized_output_path,
+            "total_duration_ms": total_duration_ms,
+            "chunks": [],
+        }
+    else:
+        # Long audio: chunk it
+        chunk_result = split_audio_into_chunks(
+            audio_path=normalized_output_path,
+            output_dir=str(job_audio_dir),
+            chunk_duration=chunk_duration_seconds,
+        )
+
+        return {
+            "is_chunked": True,
+            "normalized_audio_path": normalized_output_path,
+            "total_duration_ms": total_duration_ms,
+            "chunks": chunk_result["chunks"],
+        }

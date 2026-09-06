@@ -18,9 +18,10 @@ class TestFFmpegService(unittest.TestCase):
         self.assertEqual(result["fps"], 25.0)
         self.assertEqual(result["codec_name"], "h264")
 
+    @patch("src.ffmpeg_service.validate_final_mp4")
     @patch("src.ffmpeg_service.probe_video_stream")
     @patch("src.ffmpeg_service.subprocess.run")
-    def test_concatenate_videos_mode_a(self, mock_run, mock_probe):
+    def test_concatenate_videos_mode_a(self, mock_run, mock_probe, mock_validate):
         # Mock probe to return identical streams (triggers Mode A)
         mock_probe.return_value = {
             "width": 1920,
@@ -40,9 +41,10 @@ class TestFFmpegService(unittest.TestCase):
         self.assertIn("copy", cmd_args)
         self.assertIn("+faststart", cmd_args)
 
+    @patch("src.ffmpeg_service.validate_final_mp4")
     @patch("src.ffmpeg_service.probe_video_stream")
     @patch("src.ffmpeg_service.subprocess.run")
-    def test_concatenate_videos_mode_b(self, mock_run, mock_probe):
+    def test_concatenate_videos_mode_b(self, mock_run, mock_probe, mock_validate):
         # Mock probe to return mismatched streams (triggers Mode B)
         mock_probe.side_effect = [
             {

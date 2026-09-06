@@ -4,10 +4,15 @@ This service provides a REST API for submitting and tracking talking head avatar
 generation jobs. It accepts a face image and audio file, validates inputs, stores
 files safely, and dispatches a background pipeline task.
 
-> **Note:** The Talking Head inference engine (LatentSync or equivalent) is not
-> yet implemented in this repository. Jobs will enter a `failed` state with a
-> clear error message. This is the intended behaviour until Issue #2 (LatentSync
-> inference pipeline) is completed.
+> **Note:** The repository is designed around the official `LatentSync`
+> backend. The API keeps the existing `image_path` contract for compatibility,
+> but the real official pipeline requires a short reference video plus audio as
+> input. The service therefore produces a temporary reference video in the
+> compatibility layer before handing off to the actual LatentSync pipeline.
+>
+> The actual model weights and runtime package are not committed to this
+> repository, so the pipeline performs a controlled failure until the runtime and
+> checkpoint are configured in the environment.
 
 ---
 
@@ -121,17 +126,46 @@ request lifecycle ends. The `storage/` directory is gitignored.
    ```bash
    pip install -r requirements.txt
    ```
-4. Start the FastAPI server:
+4. Install the official LatentSync runtime from source:
+   ```bash
+   pip install "git+https://github.com/bytedance/LatentSync.git"
+   ```
+5. Download the official model assets to a local directory such as `./models/latentsync`:
+   ```bash
+   mkdir -p models/latentsync/checkpoints/whisper
+   huggingface-cli download ByteDance/LatentSync-1.6 latentsync_unet.pt --local-dir models/latentsync/checkpoints
+   huggingface-cli download ByteDance/LatentSync-1.6 tiny.pt --local-dir models/latentsync/checkpoints/whisper
+   ```
+   The upstream repo also expects the config directory to include `configs/unet/stage2_512.yaml` and `configs/scheduler_config.json`.
+6. Configure the runtime via `.env` or environment variables:
+   ```bash
+   cp .env.example .env
+   ```
+7. Start the FastAPI server:
    ```bash
    uvicorn src.main:app --reload --port 8000
    ```
-5. Open `http://localhost:8000/docs` for the OpenAPI (Swagger) documentation.
+8. Open `http://localhost:8000/docs` for the OpenAPI (Swagger) documentation.
 
 ### Running with Docker
 
 ```bash
 docker-compose up -d talking-head-service
 ```
+
+### Official LatentSync model files
+
+The repository is designed to use the official LatentSync checkpoint set from the
+upstream project:
+
+- `checkpoints/latentsync_unet.pt`
+- `checkpoints/whisper/tiny.pt` (or small/other Whisper model variant supported by the upstream repo)
+- `configs/unet/stage2_512.yaml`
+- `configs/scheduler_config.json`
+
+Do not commit these files or multi-GB model weights to the repository. Keep them
+under a local `MODEL_CACHE_DIR` or `LATENTSYNC_*` location and point the service to
+that directory via environment variables.
 
 ---
 

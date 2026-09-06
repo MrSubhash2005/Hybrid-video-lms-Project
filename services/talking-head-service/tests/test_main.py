@@ -633,3 +633,165 @@ def test_voice_gender_mapping_contains_all_supported_voices():
         "en-GB-SoniaNeural",
         "en-IN-NeerjaNeural",
     }
+
+
+def test_pipeline_successful_completion_with_backend(monkeypatch, tmp_path):
+    job_id = "job_success_001"
+    output_path = tmp_path / "result.mp4"
+    image_path = tmp_path / "face.png"
+    image_path.write_bytes(get_valid_image_bytes())
+
+    audio_path = tmp_path / "voice.wav"
+    with wave.open(str(audio_path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(16000)
+        wav_file.writeframes(b"\x00\x00" * 1600)
+
+    frame = np.zeros((64, 64, 3), dtype=np.uint8)
+    writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), 24, (64, 64))
+    writer.write(frame)
+    writer.release()
+
+    class FakeBackend:
+        def run(self, *, image_path, audio_path, output_path, progress_callback=None):
+            if progress_callback is not None:
+                progress_callback(60.0)
+            assert Path(image_path).exists()
+            assert Path(audio_path).exists()
+            return str(output_path)
+
+    monkeypatch.setattr("src.pipeline.get_inference_backend", lambda model: FakeBackend())
+
+    jobs_db[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "progress": 0.0,
+        "estimated_time_remaining": 30.0,
+        "created_at": "2024-01-01T00:00:00Z",
+        "completed_at": None,
+        "output_url": None,
+        "error_message": None,
+        "voice": "en-US-ChristopherNeural",
+        "avatar": "male",
+        "gender": "male",
+    }
+
+    result = run_talking_head_pipeline(
+        job_id=job_id,
+        image_path=str(image_path),
+        audio_path=str(audio_path),
+        model="latentsync",
+        enhancer=True,
+        jobs_db=jobs_db,
+        output_path=str(output_path),
+    )
+
+    assert result == str(output_path)
+    assert jobs_db[job_id]["status"] == "completed"
+    assert jobs_db[job_id]["progress"] == 100.0
+    assert jobs_db[job_id]["output_url"] == str(output_path.resolve())
+    assert jobs_db[job_id]["error_message"] is None
+
+
+def test_pipeline_accepts_audio_chunk_list(monkeypatch, tmp_path):
+    job_id = "job_chunks_001"
+    image_path = tmp_path / "face.png"
+    image_path.write_bytes(get_valid_image_bytes())
+
+    audio_dir = tmp_path / "chunks"
+    audio_dir.mkdir()
+    chunk_one = audio_dir / "chunk_1.wav"
+    chunk_two = audio_dir / "chunk_2.wav"
+
+    for path in (chunk_one, chunk_two):
+        with wave.open(str(path), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            wav_file.writeframes(b"\x00\x00" * 1600)
+
+    output_path = tmp_path / "chunk_output.mp4"
+    writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), 24, (64, 64))
+    writer.write(np.zeros((64, 64, 3), dtype=np.uint8))
+    writer.release()
+
+    class FakeBackend:
+        def run(self, *, image_path, audio_path, output_path, progress_callback=None):
+            assert Path(audio_path).exists()
+            return str(output_path)
+
+    monkeypatch.setattr("src.pipeline.get_inference_backend", lambda model: FakeBackend())
+    jobs_db[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "progress": 0.0,
+        "estimated_time_remaining": 30.0,
+        "created_at": "2024-01-01T00:00:00Z",
+        "completed_at": None,
+        "output_url": None,
+        "error_message": None,
+        "voice": "en-US-ChristopherNeural",
+        "avatar": "male",
+        "gender": "male",
+    }
+
+    run_talking_head_pipeline(
+        job_id=job_id,
+        image_path=str(image_path),
+        audio_path=[str(chunk_one), str(chunk_two)],
+        model="latentsync",
+        enhancer=True,
+        jobs_db=jobs_db,
+        output_path=str(output_path),
+    )
+
+    assert jobs_db[job_id]["status"] == "completed"
+    assert jobs_db[job_id]["error_message"] is None
+    assert jobs_db[job_id]["output_url"] == str(output_path.resolve())
+
+
+def test_pipeline_missing_backend_stays_controlled_failure(monkeypatch, tmp_path):
+    job_id = "job_missing_backend"
+    image_path = tmp_path / "face.png"
+    image_path.write_bytes(get_valid_image_bytes())
+
+    audio_path = tmp_path / "voice.wav"
+    with wave.open(str(audio_path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(16000)
+        wav_file.writeframes(b"\x00\x00" * 1600)
+
+    jobs_db[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "progress": 0.0,
+        "estimated_time_remaining": 30.0,
+        "created_at": "2024-01-01T00:00:00Z",
+        "completed_at": None,
+        "output_url": None,
+        "error_message": None,
+        "voice": "en-US-ChristopherNeural",
+        "avatar": "male",
+        "gender": "male",
+    }
+
+    def missing_backend(model):
+        raise Exception("LatentSync inference engine is not installed in this environment.")
+
+    monkeypatch.setattr("src.pipeline.get_inference_backend", missing_backend)
+
+    run_talking_head_pipeline(
+        job_id=job_id,
+        image_path=str(image_path),
+        audio_path=str(audio_path),
+        model="latentsync",
+        enhancer=True,
+        jobs_db=jobs_db,
+    )
+
+    assert jobs_db[job_id]["status"] == "failed"
+    assert jobs_db[job_id]["progress"] == 0.0
+    assert jobs_db[job_id]["output_url"] is None
+    assert "inference" in (jobs_db[job_id]["error_message"] or "").lower()
