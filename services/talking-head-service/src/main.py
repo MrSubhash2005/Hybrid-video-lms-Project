@@ -37,9 +37,11 @@ app = FastAPI(
     version="1.0.0",
 )
 
+
 @app.on_event("startup")
 def startup_event():
     init_db()
+
 
 register_exception_handlers(app)
 
@@ -70,6 +72,7 @@ VOICE_GENDER = {
 # ============================================================================
 # Voice / avatar helper functions
 # ============================================================================
+
 
 def get_voice_gender(voice: str) -> str:
     """
@@ -129,6 +132,7 @@ def get_avatar_for_voice(
 # Health check
 # ============================================================================
 
+
 @app.get("/")
 def read_root():
     logger.info("Health check endpoint 'GET /' called.")
@@ -141,6 +145,7 @@ def read_root():
 # ============================================================================
 # Generate avatar
 # ============================================================================
+
 
 @app.post(
     "/api/v1/avatar/generate",
@@ -219,7 +224,7 @@ async def generate_avatar(
         saved_paths["image_path"],
         saved_paths["audio_path"],
         validated_model,
-        enhancer
+        enhancer,
     )
 
     logger.info(f"Successfully queued job {job_id}")
@@ -238,6 +243,7 @@ async def generate_avatar(
 # ============================================================================
 # Job status
 # ============================================================================
+
 
 @app.get(
     "/api/v1/avatar/jobs/{job_id}",

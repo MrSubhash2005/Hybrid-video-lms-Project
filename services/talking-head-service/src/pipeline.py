@@ -44,11 +44,7 @@ def validate_video_output(output_path: str) -> bool:
 
 
 def run_talking_head_pipeline(
-    job_id: str,
-    image_path: str,
-    audio_path: str,
-    model: str,
-    enhancer: bool
+    job_id: str, image_path: str, audio_path: str, model: str, enhancer: bool
 ):
     """Talking Head Pipeline Boundary Execution Handler.
 
@@ -89,14 +85,14 @@ def run_talking_head_pipeline(
 
     except Exception as exc:
         timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        
+
         # Update failed status in SQLite
         update_job(
-            job_id, 
-            status="failed", 
-            progress=0.0, 
-            completed_at=timestamp, 
-            error_message=str(exc)
+            job_id,
+            status="failed",
+            progress=0.0,
+            completed_at=timestamp,
+            error_message=str(exc),
         )
-        
+
         logger.error(f"Pipeline failed for job {job_id}: {exc}")
