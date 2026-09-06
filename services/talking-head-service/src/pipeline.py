@@ -397,7 +397,7 @@ class _OfficialLatentSyncBackend:
         device = self._resolve_device()
         dtype = torch.float16 if device == "cuda" else torch.float32
 
-        vae = AutoencoderKL.from_pretrained(
+        vae = AutoencoderKL.frompretrained(
             "stabilityai/sd-vae-ft-mse", torch_dtype=dtype
         )
         audio_encoder = Audio2Feature(model_path=self.whisper_path, device=device)
