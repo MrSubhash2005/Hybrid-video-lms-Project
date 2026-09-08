@@ -204,3 +204,9 @@ a **controlled failure**:
 
 This is intentional and production-safe. No fake video is generated and no job is
 falsely marked `completed`.
+
+## Job Management & Storage
+Job state is managed persistently using a SQLite database (`jobs.db`) located in the root `storage/` directory. 
+* **Database:** Stores job metadata, status, progress, and URLs (`storage/jobs.db`).
+* **Outputs:** Video files are saved in `storage/{job_id}/outputs/`.
+When the server restarts, job histories and physical video outputs remain intact and accessible.
