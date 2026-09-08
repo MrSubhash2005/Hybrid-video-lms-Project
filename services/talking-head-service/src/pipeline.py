@@ -397,7 +397,7 @@ class _OfficialLatentSyncBackend:
         device = self._resolve_device()
         dtype = torch.float16 if device == "cuda" else torch.float32
 
-        vae = AutoencoderKL.frompretrained(
+        vae = AutoencoderKL.from_pretrained(
             "stabilityai/sd-vae-ft-mse", torch_dtype=dtype
         )
         audio_encoder = Audio2Feature(model_path=self.whisper_path, device=device)
@@ -512,9 +512,6 @@ def get_inference_backend(model_name: str):
 
 
 def run_talking_head_pipeline(
-<<<<<<< HEAD
-    job_id: str, image_path: str, audio_path: str, model: str, enhancer: bool
-=======
     job_id: str,
     image_path: str,
     audio_path: str,
@@ -522,7 +519,6 @@ def run_talking_head_pipeline(
     enhancer: bool,
     output_path: Optional[str] = None,
     job_context: Optional[Dict[str, Any]] = None,
->>>>>>> 1569b7e62f371dd03fb033169e9fae728c93123d
 ):
     """Execute a talking-head inference job with lazy model initialization."""
     logger.info(
@@ -537,12 +533,14 @@ def run_talking_head_pipeline(
         return
 
     output_target = _resolve_default_output_path(job_id, output_path)
-    
+    api_output_url = f"/api/v1/outputs/{job_id}/outputs/avatar.mp4"
+
     # Prepare updates for the database
     updates = {
         "status": "processing",
         "progress": 10.0,
-        "output_url": output_target
+        "output_path": output_target,
+        "output_url": api_output_url,
     }
     if job_context:
         updates.update(job_context)
@@ -589,9 +587,10 @@ def run_talking_head_pipeline(
             job_id,
             status="completed",
             progress=100.0,
-            output_url=str(Path(backend_output).resolve()),
+            output_path=str(Path(backend_output).resolve()),
+            output_url=api_output_url,
             completed_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            error_message=None
+            error_message=None,
         )
         logger.info(
             f"Pipeline completed successfully for job {job_id}: {backend_output}"
@@ -606,31 +605,22 @@ def run_talking_head_pipeline(
             progress=0.0,
             completed_at=timestamp,
             error_message=str(exc),
-            output_url=None
+            output_url=None,
+            output_path=None,
         )
         logger.error(f"Pipeline failed for job {job_id}: {exc}")
         return None
 
     except Exception as exc:
         timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-<<<<<<< HEAD
-
-        # Update failed status in SQLite
-=======
->>>>>>> 1569b7e62f371dd03fb033169e9fae728c93123d
         update_job(
             job_id,
             status="failed",
             progress=0.0,
             completed_at=timestamp,
             error_message=str(exc),
-<<<<<<< HEAD
-        )
-
-        logger.error(f"Pipeline failed for job {job_id}: {exc}")
-=======
-            output_url=None
+            output_url=None,
+            output_path=None,
         )
         logger.exception(f"Unexpected pipeline failure for job {job_id}: {exc}")
         return None
->>>>>>> 1569b7e62f371dd03fb033169e9fae728c93123d
