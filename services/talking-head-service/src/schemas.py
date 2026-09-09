@@ -1,88 +1,24 @@
+
+from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class GenerateAvatarResponse(BaseModel):
-    job_id: str = Field(..., description="Unique job identifier")
-    status: str = Field(..., description="Initial job status")
-    created_at: str = Field(..., description="ISO timestamp of job creation")
-    message: str = Field(..., description="Human-readable status message")
-
-    voice: str = Field(..., description="Voice selected for the avatar")
-    avatar: str = Field(..., description="Avatar selected for the voice")
-    gender: str = Field(..., description="Gender associated with the voice")
+    job_id: str
+    status: str
+    created_at: datetime
+    message: str
 
 
 class JobStatusResponse(BaseModel):
-    job_id: str = Field(..., description="Unique job identifier")
-
-    status: str = Field(
-        ...,
-        description="Current job status",
-    )
-
-    progress: float = Field(
-        0.0,
-        ge=0.0,
-        le=100.0,
-        description="Job completion progress percentage",
-    )
-
-    estimated_time_remaining: float = Field(
-        0.0,
-        ge=0.0,
-        description="Estimated time remaining in seconds",
-    )
-
-    created_at: str = Field(
-        ...,
-        description="ISO timestamp of job creation",
-    )
-
-    completed_at: Optional[str] = Field(
-        None,
-        description="ISO timestamp of job completion",
-    )
-
-    output_url: Optional[str] = Field(
-        None,
-        description="Generated video URL",
-    )
-
-    error_message: Optional[str] = Field(
-        None,
-        description="Failure details",
-    )
-
-    voice: Optional[str] = Field(
-        None,
-        description="Voice used for the job",
-    )
-
-    avatar: Optional[str] = Field(
-        None,
-        description="Avatar used for the job",
-    )
-
-    gender: Optional[str] = Field(
-        None,
-        description="Gender associated with the voice",
-    )
-
-
-class ErrorResponse(BaseModel):
-    detail: str = Field(
-        ...,
-        description="User-facing error details",
-    )
-
-    error_code: str = Field(
-        ...,
-        description="Machine-readable error code",
-    )
-
-    timestamp: str = Field(
-        ...,
-        description="ISO timestamp",
-    )
+    job_id: str
+    status: str
+    progress: float
+    estimated_time_remaining: Optional[float] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    output_path: Optional[str] = None
+    output_url: Optional[str] = None
+    error_message: Optional[str] = None

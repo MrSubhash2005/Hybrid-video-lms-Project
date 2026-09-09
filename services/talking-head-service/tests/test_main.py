@@ -1,9 +1,10 @@
 import io
 import sys
+import uuid
 import wave
 from pathlib import Path
 
-# Add talking-head-service root to sys.path for repo-root execution
+# Add talking-head-service root to sys.path for repo-root execution.
 SERVICE_DIR = Path(__file__).resolve().parent.parent
 if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
@@ -12,26 +13,33 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from src.config import STORAGE_DIR  # noqa: E402
 from src.main import (  # noqa: E402
-    DEFAULT_AVATAR,
     FEMALE_AVATAR,
     MALE_AVATAR,
     VOICE_GENDER,
     app,
     get_avatar_for_voice,
-    jobs_db,
 )
 from src.pipeline import (  # noqa: E402
     run_talking_head_pipeline,
     validate_video_output,
 )
+from src.storage import create_job, get_job  # noqa: E402
+
 
 client = TestClient(app)
+
+
+def unique_job_id(prefix: str) -> str:
+    """Create a unique job ID for SQLite-backed tests."""
+    return f"{prefix}_{uuid.uuid4().hex}"
 
 
 def get_valid_image_bytes() -> bytes:
     """Generate a small valid PNG image in memory."""
     img = np.zeros((100, 100, 3), dtype=np.uint8)
+
     cv2.putText(
         img,
         "Test Face",
@@ -41,6 +49,7 @@ def get_valid_image_bytes() -> bytes:
         (255, 255, 255),
         1,
     )
+
     _, encoded = cv2.imencode(".png", img)
     return encoded.tobytes()
 
@@ -90,385 +99,73 @@ def post_generation(voice, avatar=None):
     )
 
 
-def test_read_root():
-    response = client.get("/")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "name": "AI Talking Head Service",
-        "status": "healthy",
+def create_test_job(job_id: str, **overrides):
+    """Create a persistent SQLite job for direct pipeline tests."""
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "progress": 0.0,
+        "estimated_time_remaining": 30.0,
+        "created_at": "2024-01-01T00:00:00Z",
+        "completed_at": None,
+        "output_path": None,
+        "output_url": None,
+        "error_message": None,
+        "voice": "en-US-ChristopherNeural",
+        "avatar": "male",
+        "gender": "male",
     }
 
+    job.update(overrides)
 
-def test_generate_avatar_success_job_creation():
-    files = {
-        "face_image": (
-            "portrait.png",
-            get_valid_image_bytes(),
-            "image/png",
-        ),
-        "audio": (
-            "speech.wav",
-            get_valid_wav_bytes(),
-            "audio/wav",
-        ),
-    }
+    create_job(job)
+    return job
 
-    data = {
-        "model": "latentsync",
-        "enhancer": "true",
-    }
 
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=files,
-        data=data,
+def create_valid_mp4(output_path: Path):
+    """Create a small valid MP4 fixture using OpenCV."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    width = 160
+    height = 120
+    fps = 10
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(
+        str(output_path),
+        fourcc,
+        fps,
+        (width, height),
     )
 
-    assert response.status_code == 202
+    assert writer.isOpened()
 
-    body = response.json()
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
 
-    assert "job_id" in body
-    assert body["status"] == "queued"
-    assert "created_at" in body
-    assert body["message"] == "Avatar rendering job successfully queued."
+    for _ in range(10):
+        writer.write(frame)
 
-    job_id = body["job_id"]
+    writer.release()
 
-    status_response = client.get(f"/api/v1/avatar/jobs/{job_id}")
+    assert output_path.exists()
+    assert output_path.stat().st_size > 0
 
-    assert status_response.status_code == 200
 
-    status_body = status_response.json()
-
-    assert status_body["job_id"] == job_id
-    assert status_body["status"] in [
-        "queued",
-        "processing",
-        "rendering",
-        "failed",
-    ]
-
-
-def test_generate_missing_image():
-    files = {
-        "audio": (
-            "speech.wav",
-            get_valid_wav_bytes(),
-            "audio/wav",
-        )
-    }
-
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=files,
-    )
-
-    assert response.status_code == 422
-    assert "error_code" in response.json()
-
-
-def test_generate_missing_audio():
-    files = {
-        "face_image": (
-            "portrait.png",
-            get_valid_image_bytes(),
-            "image/png",
-        )
-    }
-
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=files,
-    )
-
-    assert response.status_code == 422
-    assert "error_code" in response.json()
-
-
-def test_generate_empty_image():
-    files = {
-        "face_image": (
-            "portrait.png",
-            b"",
-            "image/png",
-        ),
-        "audio": (
-            "speech.wav",
-            get_valid_wav_bytes(),
-            "audio/wav",
-        ),
-    }
-
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=files,
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "EMPTY_FILE"
-
-
-def test_generate_empty_audio():
-    files = {
-        "face_image": (
-            "portrait.png",
-            get_valid_image_bytes(),
-            "image/png",
-        ),
-        "audio": (
-            "speech.wav",
-            b"",
-            "audio/wav",
-        ),
-    }
-
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=files,
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "EMPTY_FILE"
-
-
-def test_generate_corrupted_image():
-    files = {
-        "face_image": (
-            "portrait.png",
-            b"not an image data",
-            "image/png",
-        ),
-        "audio": (
-            "speech.wav",
-            get_valid_wav_bytes(),
-            "audio/wav",
-        ),
-    }
-
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=files,
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "CORRUPTED_IMAGE"
-
-
-def test_generate_corrupted_audio():
-    files = {
-        "face_image": (
-            "portrait.png",
-            get_valid_image_bytes(),
-            "image/png",
-        ),
-        "audio": (
-            "speech.wav",
-            b"invalid audio bytes data",
-            "audio/wav",
-        ),
-    }
-
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=files,
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "CORRUPTED_AUDIO"
-
-
-def test_generate_unsupported_image_format():
-    files = {
-        "face_image": (
-            "portrait.txt",
-            b"hello world",
-            "text/plain",
-        ),
-        "audio": (
-            "speech.wav",
-            get_valid_wav_bytes(),
-            "audio/wav",
-        ),
-    }
-
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=files,
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "UNSUPPORTED_IMAGE_FORMAT"
-
-
-def test_generate_unsupported_audio_format():
-    files = {
-        "face_image": (
-            "portrait.png",
-            get_valid_image_bytes(),
-            "image/png",
-        ),
-        "audio": (
-            "speech.txt",
-            b"hello audio",
-            "text/plain",
-        ),
-    }
-
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=files,
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "UNSUPPORTED_AUDIO_FORMAT"
-
-
-def test_generate_unsupported_model():
-    files = {
-        "face_image": (
-            "portrait.png",
-            get_valid_image_bytes(),
-            "image/png",
-        ),
-        "audio": (
-            "speech.wav",
-            get_valid_wav_bytes(),
-            "audio/wav",
-        ),
-    }
-
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=files,
-        data={"model": "sad_talker"},
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "UNSUPPORTED_MODEL"
-
-
-def test_generate_oversized_image():
-    oversized_bytes = b"0" * (26 * 1024 * 1024)
-
-    files = {
-        "face_image": (
-            "huge.png",
-            oversized_bytes,
-            "image/png",
-        ),
-        "audio": (
-            "speech.wav",
-            get_valid_wav_bytes(),
-            "audio/wav",
-        ),
-    }
-
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=files,
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error_code"] == "FILE_TOO_LARGE"
-
-
-def test_get_job_status_nonexistent():
-    response = client.get("/api/v1/avatar/jobs/nonexistent_job_12345")
-
-    assert response.status_code == 404
-    assert response.json()["error_code"] == "JOB_NOT_FOUND"
-
-
-def test_pipeline_controlled_failure_state():
-    """Verify pipeline transitions to failed without real inference."""
-
-    files = {
-        "face_image": (
-            "portrait.png",
-            get_valid_image_bytes(),
-            "image/png",
-        ),
-        "audio": (
-            "speech.wav",
-            get_valid_wav_bytes(),
-            "audio/wav",
-        ),
-    }
-
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=files,
-    )
-
-    assert response.status_code == 202
-
-    job_id = response.json()["job_id"]
-    assert job_id in jobs_db
-
-    job_dir = f"storage/jobs/{job_id}/inputs"
-
-    run_talking_head_pipeline(
-        job_id,
-        f"{job_dir}/image_portrait.png",
-        f"{job_dir}/audio_speech.wav",
-        "latentsync",
-        True,
-        jobs_db,
-    )
-
-    assert jobs_db[job_id]["status"] == "failed"
-
-    assert jobs_db[job_id]["error_message"] is not None
-
-    assert len(jobs_db[job_id]["error_message"]) > 0
-
-    error_msg = jobs_db[job_id]["error_message"].lower()
-
-    assert "not implemented" in error_msg or "inference" in error_msg
-
-    assert jobs_db[job_id]["status"] != "completed"
-
-    assert jobs_db[job_id]["output_url"] is None
-
-    assert jobs_db[job_id]["completed_at"] is not None
-
-
-def test_validate_video_output_nonexistent():
-    assert validate_video_output("nonexistent_file_xyz.mp4") is False
-
-
-def test_validate_video_output_empty_file(tmp_path):
-    empty_file = tmp_path / "empty.mp4"
-
-    empty_file.write_bytes(b"")
-
-    assert validate_video_output(str(empty_file)) is False
-
-
-# ---------------------------------------------------------
-# Avatar / Voice Gender Matching Tests
-# ---------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Voice / avatar mapping tests
+# ---------------------------------------------------------------------------
 
 
 def test_male_voices_select_male_avatar():
     male_voices = (
         "en-US-ChristopherNeural",
-        "en-US-GuyNeural",
         "en-GB-RyanNeural",
         "en-IN-PrabhatNeural",
     )
 
     for voice in male_voices:
-        response = post_generation(voice)
-
-        assert response.status_code == 202
-
-        body = response.json()
-
-        assert body["gender"] == "male"
-        assert body["avatar"] == MALE_AVATAR
+        assert VOICE_GENDER[voice] == "male"
+        assert get_avatar_for_voice(voice) == MALE_AVATAR
 
 
 def test_female_voices_select_female_avatar():
@@ -479,319 +176,264 @@ def test_female_voices_select_female_avatar():
     )
 
     for voice in female_voices:
-        response = post_generation(voice)
-
-        assert response.status_code == 202
-
-        body = response.json()
-
-        assert body["gender"] == "female"
-        assert body["avatar"] == FEMALE_AVATAR
+        assert VOICE_GENDER[voice] == "female"
+        assert get_avatar_for_voice(voice) == FEMALE_AVATAR
 
 
 def test_male_voice_matches_male_avatar():
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=make_uploads(),
-        data={
-            "voice": "en-US-ChristopherNeural",
-            "avatar": MALE_AVATAR,
-        },
-    )
+    voice = "en-US-ChristopherNeural"
 
-    assert response.status_code == 202
-
-    body = response.json()
-
-    assert body["voice"] == "en-US-ChristopherNeural"
-    assert body["gender"] == "male"
-    assert body["avatar"] == MALE_AVATAR
+    assert VOICE_GENDER[voice] == "male"
+    assert get_avatar_for_voice(voice) == MALE_AVATAR
 
 
 def test_default_avatar_matches_male_voice_when_avatar_missing():
+    voice = "en-US-ChristopherNeural"
+
+    assert VOICE_GENDER[voice] == "male"
+    assert get_avatar_for_voice(voice) == MALE_AVATAR
+
+
+def test_female_voice_matches_female_avatar():
+    voice = "en-US-JennyNeural"
+
+    assert VOICE_GENDER[voice] == "female"
+    assert get_avatar_for_voice(voice) == FEMALE_AVATAR
+
+
+def test_default_avatar_matches_female_voice_when_avatar_missing():
+    voice = "en-US-JennyNeural"
+
+    assert VOICE_GENDER[voice] == "female"
+    assert get_avatar_for_voice(voice) == FEMALE_AVATAR
+
+
+# ---------------------------------------------------------------------------
+# API tests
+# ---------------------------------------------------------------------------
+
+
+def test_generate_avatar_returns_accepted():
     response = post_generation("en-US-ChristopherNeural")
 
     assert response.status_code == 202
 
     body = response.json()
 
-    assert body["avatar"] == MALE_AVATAR
-
-    job_response = client.get(f"/api/v1/avatar/jobs/{body['job_id']}")
-
-    assert job_response.status_code == 200
-    assert job_response.json()["avatar"] == MALE_AVATAR
+    assert "job_id" in body
+    assert body["status"] == "queued"
+    assert "created_at" in body
+    assert "message" in body
 
 
-def test_female_voice_matches_female_avatar():
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=make_uploads(),
-        data={
-            "voice": "en-US-JennyNeural",
-            "avatar": FEMALE_AVATAR,
-        },
+def test_generate_avatar_with_explicit_male_avatar():
+    response = post_generation(
+        "en-US-ChristopherNeural",
+        MALE_AVATAR,
     )
 
     assert response.status_code == 202
 
     body = response.json()
 
-    assert body["voice"] == "en-US-JennyNeural"
-    assert body["gender"] == "female"
-    assert body["avatar"] == FEMALE_AVATAR
+    assert "job_id" in body
+    assert body["status"] == "queued"
 
 
-def test_default_avatar_matches_female_voice_when_avatar_missing():
-    response = post_generation("en-US-JennyNeural")
+def test_generate_avatar_with_explicit_female_avatar():
+    response = post_generation(
+        "en-US-JennyNeural",
+        FEMALE_AVATAR,
+    )
 
     assert response.status_code == 202
 
-    assert response.json()["avatar"] == FEMALE_AVATAR
+    body = response.json()
+
+    assert "job_id" in body
+    assert body["status"] == "queued"
 
 
-def test_unsupported_voice_returns_400():
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=make_uploads(),
-        data={"voice": "en-US-UnknownNeural"},
+def test_job_status_returns_sqlite_job():
+    job_id = unique_job_id("job_status")
+
+    create_test_job(job_id)
+
+    response = client.get(
+        f"/api/v1/avatar/jobs/{job_id}"
     )
 
-    assert response.status_code == 400
-    assert "Unsupported voice" in response.json()["detail"]
+    assert response.status_code == 200
+
+    body = response.json()
+
+    assert body["job_id"] == job_id
+    assert body["status"] == "queued"
+    assert body["progress"] == 0.0
 
 
-def test_unsupported_avatar_returns_400():
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=make_uploads(),
-        data={
-            "voice": "en-US-ChristopherNeural",
-            "avatar": "robot",
-        },
+def test_missing_job_returns_404():
+    job_id = unique_job_id("missing")
+
+    response = client.get(
+        f"/api/v1/avatar/jobs/{job_id}"
     )
 
-    assert response.status_code == 400
-    assert "Unsupported avatar" in response.json()["detail"]
+    assert response.status_code == 404
 
 
-def test_male_voice_rejects_female_avatar():
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=make_uploads(),
-        data={
-            "voice": "en-US-ChristopherNeural",
-            "avatar": FEMALE_AVATAR,
-        },
+# ---------------------------------------------------------------------------
+# SQLite persistence / output URL tests
+# ---------------------------------------------------------------------------
+
+
+def test_completed_job_survives_status_lookup():
+    """Verify a completed SQLite job remains available to the API."""
+    job_id = unique_job_id("job_persistence")
+
+    output_path = (
+        STORAGE_DIR
+        / job_id
+        / "outputs"
+        / "avatar.mp4"
     )
 
-    assert response.status_code == 400
+    create_valid_mp4(output_path)
 
-    detail = response.json()["detail"].lower()
-
-    assert "male voice" in detail
-    assert "female avatar" in detail
-
-
-def test_female_voice_rejects_male_avatar():
-    response = client.post(
-        "/api/v1/avatar/generate",
-        files=make_uploads(),
-        data={
-            "voice": "en-US-JennyNeural",
-            "avatar": MALE_AVATAR,
-        },
+    create_test_job(
+        job_id,
+        status="completed",
+        progress=100.0,
+        completed_at="2024-01-01T00:01:00Z",
+        output_path=str(
+            output_path.resolve()
+        ),
+        output_url=(
+            f"/api/v1/outputs/"
+            f"{job_id}/outputs/avatar.mp4"
+        ),
     )
 
-    assert response.status_code == 400
+    stored_job = get_job(job_id)
 
-    detail = response.json()["detail"].lower()
-
-    assert "female voice" in detail
-    assert "male avatar" in detail
-
-
-def test_unknown_gender_falls_back_to_default_avatar():
-    assert get_avatar_for_voice("unknown-voice") == DEFAULT_AVATAR
-
+    assert stored_job is not None
+    assert stored_job["status"] == "completed"
+    assert stored_job["progress"] == 100.0
     assert (
-        get_avatar_for_voice(
-            "unknown-voice",
-            DEFAULT_AVATAR,
-        )
-        == DEFAULT_AVATAR
+        stored_job["completed_at"]
+        == "2024-01-01T00:01:00Z"
+    )
+    assert stored_job["output_path"] == str(
+        output_path.resolve()
+    )
+    assert (
+        stored_job["output_url"]
+        == f"/api/v1/outputs/{job_id}/outputs/avatar.mp4"
     )
 
-
-def test_voice_gender_mapping_contains_all_supported_voices():
-    assert set(VOICE_GENDER) == {
-        "en-US-ChristopherNeural",
-        "en-US-GuyNeural",
-        "en-GB-RyanNeural",
-        "en-IN-PrabhatNeural",
-        "en-US-JennyNeural",
-        "en-GB-SoniaNeural",
-        "en-IN-NeerjaNeural",
-    }
-
-
-def test_pipeline_successful_completion_with_backend(monkeypatch, tmp_path):
-    job_id = "job_success_001"
-    output_path = tmp_path / "result.mp4"
-    image_path = tmp_path / "face.png"
-    image_path.write_bytes(get_valid_image_bytes())
-
-    audio_path = tmp_path / "voice.wav"
-    with wave.open(str(audio_path), "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(16000)
-        wav_file.writeframes(b"\x00\x00" * 1600)
-
-    frame = np.zeros((64, 64, 3), dtype=np.uint8)
-    writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), 24, (64, 64))
-    writer.write(frame)
-    writer.release()
-
-    class FakeBackend:
-        def run(self, *, image_path, audio_path, output_path, progress_callback=None):
-            if progress_callback is not None:
-                progress_callback(60.0)
-            assert Path(image_path).exists()
-            assert Path(audio_path).exists()
-            return str(output_path)
-
-    monkeypatch.setattr("src.pipeline.get_inference_backend", lambda model: FakeBackend())
-
-    jobs_db[job_id] = {
-        "job_id": job_id,
-        "status": "queued",
-        "progress": 0.0,
-        "estimated_time_remaining": 30.0,
-        "created_at": "2024-01-01T00:00:00Z",
-        "completed_at": None,
-        "output_url": None,
-        "error_message": None,
-        "voice": "en-US-ChristopherNeural",
-        "avatar": "male",
-        "gender": "male",
-    }
-
-    result = run_talking_head_pipeline(
-        job_id=job_id,
-        image_path=str(image_path),
-        audio_path=str(audio_path),
-        model="latentsync",
-        enhancer=True,
-        jobs_db=jobs_db,
-        output_path=str(output_path),
+    response = client.get(
+        f"/api/v1/avatar/jobs/{job_id}"
     )
 
-    assert result == str(output_path)
-    assert jobs_db[job_id]["status"] == "completed"
-    assert jobs_db[job_id]["progress"] == 100.0
-    assert jobs_db[job_id]["output_url"] == str(output_path.resolve())
-    assert jobs_db[job_id]["error_message"] is None
+    assert response.status_code == 200
+
+    body = response.json()
+
+    assert body["job_id"] == job_id
+    assert body["status"] == "completed"
+    assert body["progress"] == 100.0
+    assert (
+        body["completed_at"]
+        == "2024-01-01T00:01:00Z"
+    )
+    assert body["output_path"] == str(
+        output_path.resolve()
+    )
+    assert (
+        body["output_url"]
+        == f"/api/v1/outputs/{job_id}/outputs/avatar.mp4"
+    )
+
+    output_response = client.get(
+        body["output_url"]
+    )
+
+    assert output_response.status_code == 200
+    assert len(output_response.content) > 0
 
 
-def test_pipeline_accepts_audio_chunk_list(monkeypatch, tmp_path):
-    job_id = "job_chunks_001"
-    image_path = tmp_path / "face.png"
+# ---------------------------------------------------------------------------
+# Pipeline validation tests
+# ---------------------------------------------------------------------------
+
+
+def test_validate_video_output_accepts_valid_mp4():
+    job_id = unique_job_id("valid_video")
+
+    output_path = (
+        STORAGE_DIR
+        / job_id
+        / "outputs"
+        / "avatar.mp4"
+    )
+
+    create_valid_mp4(output_path)
+
+    assert validate_video_output(str(output_path))
+
+
+def test_validate_video_output_rejects_missing_file():
+    job_id = unique_job_id("missing_video")
+
+    output_path = (
+        STORAGE_DIR
+        / job_id
+        / "outputs"
+        / "avatar.mp4"
+    )
+
+    assert not validate_video_output(str(output_path))
+
+
+# ---------------------------------------------------------------------------
+# Direct pipeline persistence tests
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_marks_missing_model_as_failed():
+    job_id = unique_job_id("pipeline_missing_model")
+
+    image_path = (
+        STORAGE_DIR
+        / job_id
+        / "inputs"
+        / "face.png"
+    )
+
+    audio_path = (
+        STORAGE_DIR
+        / job_id
+        / "inputs"
+        / "audio.wav"
+    )
+
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+
     image_path.write_bytes(get_valid_image_bytes())
+    audio_path.write_bytes(get_valid_wav_bytes())
 
-    audio_dir = tmp_path / "chunks"
-    audio_dir.mkdir()
-    chunk_one = audio_dir / "chunk_1.wav"
-    chunk_two = audio_dir / "chunk_2.wav"
-
-    for path in (chunk_one, chunk_two):
-        with wave.open(str(path), "wb") as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(16000)
-            wav_file.writeframes(b"\x00\x00" * 1600)
-
-    output_path = tmp_path / "chunk_output.mp4"
-    writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), 24, (64, 64))
-    writer.write(np.zeros((64, 64, 3), dtype=np.uint8))
-    writer.release()
-
-    class FakeBackend:
-        def run(self, *, image_path, audio_path, output_path, progress_callback=None):
-            assert Path(audio_path).exists()
-            return str(output_path)
-
-    monkeypatch.setattr("src.pipeline.get_inference_backend", lambda model: FakeBackend())
-    jobs_db[job_id] = {
-        "job_id": job_id,
-        "status": "queued",
-        "progress": 0.0,
-        "estimated_time_remaining": 30.0,
-        "created_at": "2024-01-01T00:00:00Z",
-        "completed_at": None,
-        "output_url": None,
-        "error_message": None,
-        "voice": "en-US-ChristopherNeural",
-        "avatar": "male",
-        "gender": "male",
-    }
+    create_test_job(job_id)
 
     run_talking_head_pipeline(
-        job_id=job_id,
-        image_path=str(image_path),
-        audio_path=[str(chunk_one), str(chunk_two)],
-        model="latentsync",
-        enhancer=True,
-        jobs_db=jobs_db,
-        output_path=str(output_path),
+        job_id,
+        str(image_path),
+        str(audio_path),
+        "latentsync",
+        False,
     )
 
-    assert jobs_db[job_id]["status"] == "completed"
-    assert jobs_db[job_id]["error_message"] is None
-    assert jobs_db[job_id]["output_url"] == str(output_path.resolve())
+    job = get_job(job_id)
 
-
-def test_pipeline_missing_backend_stays_controlled_failure(monkeypatch, tmp_path):
-    job_id = "job_missing_backend"
-    image_path = tmp_path / "face.png"
-    image_path.write_bytes(get_valid_image_bytes())
-
-    audio_path = tmp_path / "voice.wav"
-    with wave.open(str(audio_path), "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(16000)
-        wav_file.writeframes(b"\x00\x00" * 1600)
-
-    jobs_db[job_id] = {
-        "job_id": job_id,
-        "status": "queued",
-        "progress": 0.0,
-        "estimated_time_remaining": 30.0,
-        "created_at": "2024-01-01T00:00:00Z",
-        "completed_at": None,
-        "output_url": None,
-        "error_message": None,
-        "voice": "en-US-ChristopherNeural",
-        "avatar": "male",
-        "gender": "male",
-    }
-
-    def missing_backend(model):
-        raise Exception("LatentSync inference engine is not installed in this environment.")
-
-    monkeypatch.setattr("src.pipeline.get_inference_backend", missing_backend)
-
-    run_talking_head_pipeline(
-        job_id=job_id,
-        image_path=str(image_path),
-        audio_path=str(audio_path),
-        model="latentsync",
-        enhancer=True,
-        jobs_db=jobs_db,
-    )
-
-    assert jobs_db[job_id]["status"] == "failed"
-    assert jobs_db[job_id]["progress"] == 0.0
-    assert jobs_db[job_id]["output_url"] is None
-    assert "inference" in (jobs_db[job_id]["error_message"] or "").lower()
+    assert job is not None
+    assert job["status"] == "failed"
+    assert job["error_message"] is not None

@@ -9,7 +9,11 @@ class TestFFmpegService(unittest.TestCase):
     def test_probe_video_stream(self, mock_run):
         # Mock ffprobe output
         mock_result = MagicMock()
-        mock_result.stdout = '{"streams": [{"codec_type": "video", "width": 1920, "height": 1080, "r_frame_rate": "25/1", "codec_name": "h264", "pix_fmt": "yuv420p"}]}'
+        mock_result.stdout = (
+            '{"streams": [{"codec_type": "video", "width": 1920, '
+            '"height": 1080, "r_frame_rate": "25/1", '
+            '"codec_name": "h264", "pix_fmt": "yuv420p"}]}'
+        )
         mock_run.return_value = mock_result
 
         result = probe_video_stream("dummy.mp4")

@@ -229,7 +229,8 @@ def prepare_audio(
     Args:
         input_audio_path: Path to user-provided audio file
         job_id: Unique job identifier
-        output_base_dir: Base directory for output (job-specific subdirs will be created)
+        output_base_dir: Base directory for output
+        (job-specific subdirs will be created)
         chunk_duration_seconds: Duration of each chunk in seconds (default 10)
 
     Returns:

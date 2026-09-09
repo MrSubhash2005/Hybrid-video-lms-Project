@@ -1,6 +1,6 @@
 import json
 import subprocess
-from pathlib import Path
+
 
 from src.ffmpeg_service import (
     FFmpegAssemblyError,
