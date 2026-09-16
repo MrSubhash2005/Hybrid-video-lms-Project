@@ -1,6 +1,7 @@
 import importlib
 import os
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -20,6 +21,8 @@ from src.config import (
     MODEL_CACHE_DIR,
     STORAGE_DIR,
     TALKING_HEAD_DEVICE,
+    WAV2LIP_CHECKPOINT_PATH,
+    WAV2LIP_DIR,
 )
 from src.exceptions import PipelineError
 from src.logging_config import get_logger
@@ -475,14 +478,142 @@ class _OfficialLatentSyncBackend:
                 pass
 
 
+
+class _Wav2LipBackend:
+    """Run the local Wav2Lip inference.py as a subprocess.
+
+    The subprocess is executed with ``cwd`` set to the Wav2Lip directory so
+    that ``inference.py``'s own relative imports (``audio``, ``face_detection``,
+    ``models``) resolve exactly as they do when the script is run manually.
+    No Wav2Lip source files are imported into the service process.
+    """
+
+    def __init__(self, wav2lip_dir: str, checkpoint_path: str):
+        self.wav2lip_dir = Path(wav2lip_dir).resolve()
+        self.checkpoint_path = Path(checkpoint_path).resolve()
+
+    def run(
+        self,
+        *,
+        image_path: str,
+        audio_path: str,
+        output_path: str,
+        progress_callback: Optional[Callable[[float], None]] = None,
+    ) -> str:
+        if progress_callback:
+            progress_callback(10.0)
+
+        if not self.wav2lip_dir.is_dir():
+            raise PipelineError(
+                f"Wav2Lip directory not found: '{self.wav2lip_dir}'"
+            )
+
+        inference_script = self.wav2lip_dir / "inference.py"
+        if not inference_script.is_file():
+            raise PipelineError(
+                f"Wav2Lip inference.py not found: '{inference_script}'"
+            )
+
+        if not self.checkpoint_path.is_file():
+            raise PipelineError(
+                f"Wav2Lip checkpoint not found: '{self.checkpoint_path}'"
+            )
+
+        image = Path(image_path).resolve()
+        audio = Path(audio_path).resolve()
+        output = Path(output_path).resolve()
+
+        if not image.is_file():
+            raise PipelineError(f"Face image not found: '{image}'")
+
+        if not audio.is_file():
+            raise PipelineError(f"Audio file not found: '{audio}'")
+
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            sys.executable,
+            str(inference_script),
+            "--checkpoint_path",
+            str(self.checkpoint_path),
+            "--face",
+            str(image),
+            "--audio",
+            str(audio),
+            "--outfile",
+            str(output),
+            "--static",
+            "True",
+            "--fps",
+            "25",
+            "--wav2lip_batch_size",
+            "1",
+            "--face_det_batch_size",
+            "1",
+        ]
+
+        if progress_callback:
+            progress_callback(30.0)
+
+        logger.info("Running Wav2Lip inference")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(self.wav2lip_dir),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception as exc:
+            raise PipelineError(f"Failed to start Wav2Lip subprocess: {exc}") from exc
+
+        if result.stdout:
+            logger.info("Wav2Lip stdout:\n%s", result.stdout[-4000:])
+        if result.stderr:
+            logger.info("Wav2Lip stderr:\n%s", result.stderr[-4000:])
+
+        if progress_callback:
+            progress_callback(90.0)
+
+        if result.returncode != 0:
+            raise PipelineError(
+                f"Wav2Lip inference failed with exit code {result.returncode}.\n"
+                f"{result.stderr[-2000:]}"
+            )
+
+        if not output.is_file():
+            raise PipelineError(
+                f"Wav2Lip completed but output file was not created: '{output}'"
+            )
+
+        if output.stat().st_size == 0:
+            raise PipelineError(
+                f"Wav2Lip created an empty output file: '{output}'"
+            )
+
+        return str(output)
+
+
 @lru_cache(maxsize=4)
 def get_inference_backend(model_name: str):
     """Lazy-load the configured model backend when the runtime is installed."""
     normalized = (model_name or DEFAULT_MODEL).strip().lower()
+
+    # ------------------------------------------------------------------
+    # Wav2Lip backend — calls inference.py via subprocess; no in-process
+    # import of Wav2Lip modules is required.
+    # ------------------------------------------------------------------
+    if normalized == "wav2lip":
+        return _Wav2LipBackend(
+            wav2lip_dir=WAV2LIP_DIR,
+            checkpoint_path=WAV2LIP_CHECKPOINT_PATH,
+        )
+
     if normalized != "latentsync":
         raise PipelineError(
             f"Unsupported model '{model_name}'. "
-            "The repository is configured for 'latentsync'."
+            "Supported models: 'wav2lip', 'latentsync'."
         )
 
     checkpoint_path = _resolve_checkpoint_path(normalized)

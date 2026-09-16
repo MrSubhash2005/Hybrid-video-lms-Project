@@ -32,6 +32,18 @@ LATENTSYNC_CONFIG_DIR = os.getenv("LATENTSYNC_CONFIG_DIR", str(BASE_DIR / "confi
 LATENTSYNC_MODEL_REPO = os.getenv("LATENTSYNC_MODEL_REPO", "ByteDance/LatentSync-1.6")
 TALKING_HEAD_DEVICE = os.getenv("TALKING_HEAD_DEVICE", "cpu")
 
+# Wav2Lip backend configuration.
+# WAV2LIP_DIR defaults to a sibling "Wav2Lip" directory next to the repo root
+# (i.e. <repo_root>/Wav2Lip).  Override via environment variable for any other layout.
+WAV2LIP_DIR = os.getenv(
+    "WAV2LIP_DIR",
+    str(Path(__file__).resolve().parent.parent.parent.parent / "Wav2Lip"),
+)
+WAV2LIP_CHECKPOINT_PATH = os.getenv(
+    "WAV2LIP_CHECKPOINT_PATH",
+    str(Path(WAV2LIP_DIR) / "checkpoints" / "wav2lip_gan.pth"),
+)
+
 # File validation constraints
 MAX_IMAGE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
 MAX_AUDIO_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
@@ -51,9 +63,9 @@ ALLOWED_AUDIO_MIME_TYPES = {
     "audio/m4a",
 }
 
-# Models recognized by the service configuration in this repository.
-# The repository's intended backend is the official LatentSync implementation
-# using the Hugging Face checkpoint `ByteDance/LatentSync-1.6` and the
-# `latentsync_unet.pt` model file.
-DEFAULT_MODEL = "latentsync"
-SUPPORTED_MODELS = {DEFAULT_MODEL}
+# Models recognized by the service.
+# "wav2lip" is the default because the local Wav2Lip installation has been
+# verified to produce correct lip-sync output.  "latentsync" remains available
+# as a legacy/fallback backend when the official LatentSync runtime is present.
+DEFAULT_MODEL = "wav2lip"
+SUPPORTED_MODELS = {"wav2lip", "latentsync"}

@@ -116,3 +116,6 @@ services/talking-head-service/storage/
 
 # Windows shortcut files
 *.lnk
+
+# Local Wav2Lip installation
+Wav2Lip/

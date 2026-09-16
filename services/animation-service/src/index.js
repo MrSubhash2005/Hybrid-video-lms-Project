@@ -15,6 +15,14 @@ import { explainerSubtitlesList } from './explainer_subtitles.js';
 import { ragSubtitlesList } from './rag_subtitles.js';
 import { dsaSubtitlesList } from './dsa_subtitles.js';
 
+import {
+  getTalkingHeadBaseUrl,
+  requestAvatarGeneration,
+  pollAvatarJob,
+  resolveAvatarVideo,
+  composeHybridVideo
+} from './avatarClient.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -648,14 +656,127 @@ app.get('/api/job/:jobId/config.js', (req, res) => {
   `);
 });
 
+// Hybrid Pipeline background process
+async function runHybridPipeline(jobId, { courseVideoPath, audioPath, avatarImagePath, pipWidth = 360, pipHeight = 360, margin = 40 }) {
+  const job = jobsDb.get(jobId);
+  const OUTPUT_DIR = path.join(__dirname, '../public/outputs');
+  const ASSETS_DIR = path.join(__dirname, '../public/assets');
+
+  try {
+    console.log(`\x1b[35m[Hybrid Pipeline]\x1b[0m Job ${jobId} | Starting talking-head avatar generation...`);
+    job.status = 'generating_avatar';
+    job.progress = 20;
+    jobsDb.set(jobId, { ...job });
+
+    // 1. Resolve face image
+    let faceImage = avatarImagePath;
+    if (!faceImage || !fs.existsSync(faceImage)) {
+      faceImage = path.join(ASSETS_DIR, 'avatar.jpg');
+    }
+    if (!fs.existsSync(faceImage)) {
+      throw new Error(`Avatar face image not found at: ${faceImage}`);
+    }
+
+    // 2. Resolve audio
+    let audio = audioPath;
+    if (!audio || !fs.existsSync(audio)) {
+      const defaultNarration = path.resolve(process.cwd(), 'hybrid-output/narration.wav');
+      const jobAudio = path.join(ASSETS_DIR, `final_audio_${jobId}.wav`);
+      if (fs.existsSync(defaultNarration)) {
+        audio = defaultNarration;
+      } else if (fs.existsSync(jobAudio)) {
+        audio = jobAudio;
+      } else {
+        // Extract 10-second audio slice from course video
+        const extractedAudio = path.join(ASSETS_DIR, `narration_${jobId}.wav`);
+        await execPromise(`ffmpeg -y -i "${courseVideoPath}" -t 10 -vn -c:a pcm_s16le -ar 16000 -ac 1 "${extractedAudio}"`);
+        audio = extractedAudio;
+      }
+    }
+
+    // 3. Dispatch job to talking-head-service
+    const talkingHeadUrl = getTalkingHeadBaseUrl();
+    console.log(`\x1b[35m[Hybrid Pipeline]\x1b[0m Job ${jobId} | Dispatching to ${talkingHeadUrl}...`);
+    const avatarResponse = await requestAvatarGeneration({
+      talkingHeadUrl,
+      faceImagePath: faceImage,
+      audioPath: audio,
+      model: 'wav2lip',
+      enhancer: false
+    });
+
+    job.avatar_job_id = avatarResponse.job_id;
+    job.status = 'rendering_avatar';
+    job.progress = 40;
+    jobsDb.set(jobId, { ...job });
+    console.log(`\x1b[35m[Hybrid Pipeline]\x1b[0m Job ${jobId} | Queued avatar job: ${avatarResponse.job_id}. Polling...`);
+
+    // 4. Poll until completed
+    const completedAvatar = await pollAvatarJob({
+      talkingHeadUrl,
+      jobId: avatarResponse.job_id,
+      onProgress: (p) => {
+        if (p && p.progress) {
+          job.progress = 40 + Math.round(p.progress * 0.4);
+          jobsDb.set(jobId, { ...job });
+        }
+      }
+    });
+
+    // 5. Resolve avatar video
+    console.log(`\x1b[35m[Hybrid Pipeline]\x1b[0m Job ${jobId} | Avatar completed. Resolving video...`);
+    const avatarVideoPath = await resolveAvatarVideo({
+      talkingHeadUrl,
+      jobData: completedAvatar,
+      targetDir: ASSETS_DIR
+    });
+
+    // 6. Compose hybrid video
+    job.status = 'composing_hybrid';
+    job.progress = 85;
+    jobsDb.set(jobId, { ...job });
+
+    if (!fs.existsSync(OUTPUT_DIR)) {
+      fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    }
+    const finalHybridMp4 = path.join(OUTPUT_DIR, `hybrid_${jobId}.mp4`);
+
+    console.log(`\x1b[35m[Hybrid Pipeline]\x1b[0m Job ${jobId} | Composing hybrid video via FFmpeg...`);
+    await composeHybridVideo({
+      courseVideoPath,
+      avatarVideoPath,
+      outputHybridPath: finalHybridMp4,
+      pipWidth,
+      pipHeight,
+      margin
+    });
+
+    job.status = 'completed';
+    job.progress = 100;
+    job.output_url = `/outputs/hybrid_${jobId}.mp4`;
+    job.completed_at = new Date().toISOString();
+    jobsDb.set(jobId, { ...job });
+
+    console.log(`\x1b[32m[Hybrid Pipeline Completed]\x1b[0m Job ${jobId} | Video generated: ${finalHybridMp4}`);
+    return finalHybridMp4;
+  } catch (err) {
+    console.error(`\x1b[31m[Hybrid Pipeline Failed]\x1b[0m Job ${jobId} | Error: ${err.message}`);
+    job.status = 'failed';
+    job.error = err.message;
+    jobsDb.set(jobId, { ...job });
+    throw err;
+  }
+}
+
 // Create video generation job
 app.post('/api/v1/course/generate', async (req, res) => {
-  const { celebrity, course, gender } = req.body;
+  const { celebrity, course, gender, enable_avatar, avatar_image, audio_path, pip_width, pip_height, margin, wait } = req.body;
   if (!celebrity) {
     return res.status(400).json({ error: 'Missing celebrity name in request body.' });
   }
 
   const courseKey = normalizeCourseName(course);
+  const isHybrid = Boolean(enable_avatar || req.body.with_avatar || req.body.avatar);
 
   // Determine gender dynamically: 1) Body override, 2) OpenRouter AI, 3) Robust local heuristic
   let targetGender = (gender && gender !== 'auto') ? gender : null;
@@ -678,13 +799,14 @@ app.post('/api/v1/course/generate', async (req, res) => {
     language_code: voice.language_code,
     status: 'queued',
     progress: 0,
+    enable_avatar: isHybrid,
     created_at: new Date().toISOString(),
     completed_at: null,
     output_url: null
   };
 
   jobsDb.set(jobId, job);
-  console.log(`\x1b[35m[Job Queued]\x1b[0m Job ID: ${jobId} | Course: ${job.course} | Celebrity: ${celebrity} | Gender: ${targetGender}`);
+  console.log(`\x1b[35m[Job Queued]\x1b[0m Job ID: ${jobId} | Course: ${job.course} | Celebrity: ${celebrity} | Gender: ${targetGender} | Hybrid: ${isHybrid}`);
 
   // Check if we have a pre-rendered cache video for this course & gender
   const OUTPUT_DIR = path.join(__dirname, '../public/outputs');
@@ -699,12 +821,46 @@ app.post('/api/v1/course/generate', async (req, res) => {
   const finalOutputMp4 = path.join(OUTPUT_DIR, `video_${jobId}.mp4`);
 
   if (selectedCache) {
-    console.log(`\x1b[32m[Cache Hit]\x1b[0m Job ID: ${jobId} | Copying pre-rendered video for ${courseKey} (${targetGender}) instantly.`);
     if (!fs.existsSync(OUTPUT_DIR)) {
       fs.mkdirSync(OUTPUT_DIR, { recursive: true });
     }
     fs.copyFileSync(selectedCache, finalOutputMp4);
 
+    if (isHybrid) {
+      console.log(`\x1b[32m[Cache Hit - Hybrid]\x1b[0m Job ID: ${jobId} | Found pre-rendered video for ${courseKey} (${targetGender}). Starting hybrid pipeline.`);
+      const hybridPromise = runHybridPipeline(jobId, {
+        courseVideoPath: selectedCache,
+        audioPath: audio_path,
+        avatarImagePath: avatar_image,
+        pipWidth: pip_width,
+        pipHeight: pip_height,
+        margin: margin
+      });
+
+      if (wait === true) {
+        try {
+          await hybridPromise;
+          return res.status(200).json(jobsDb.get(jobId));
+        } catch (err) {
+          return res.status(500).json({ error: err.message, job: jobsDb.get(jobId) });
+        }
+      }
+
+      return res.status(202).json({
+        job_id: jobId,
+        status: 'queued',
+        course: job.course,
+        celebrity: job.celebrity,
+        gender: job.gender,
+        enable_avatar: true,
+        created_at: job.created_at,
+        check_status_url: `/api/v1/course/jobs/${jobId}`,
+        message: `Hybrid video generation job with avatar successfully queued.`
+      });
+    }
+
+    // Normal non-hybrid cache hit flow (100% existing behavior preserved)
+    console.log(`\x1b[32m[Cache Hit]\x1b[0m Job ID: ${jobId} | Copying pre-rendered video for ${courseKey} (${targetGender}) instantly.`);
     job.status = 'completed';
     job.progress = 100;
     job.completed_at = new Date().toISOString();
@@ -761,7 +917,9 @@ app.get('/api/v1/course/download/:jobId', (req, res) => {
   if (job.status !== 'completed') {
     return res.status(400).json({ error: `Job is in status: ${job.status}. Cannot download yet.` });
   }
-  const filePath = path.join(__dirname, `../public/outputs/video_${jobId}.mp4`);
+  const hybridPath = path.join(__dirname, `../public/outputs/hybrid_${jobId}.mp4`);
+  const standardPath = path.join(__dirname, `../public/outputs/video_${jobId}.mp4`);
+  const filePath = fs.existsSync(hybridPath) ? hybridPath : standardPath;
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'Video file not found on disk' });
   }
