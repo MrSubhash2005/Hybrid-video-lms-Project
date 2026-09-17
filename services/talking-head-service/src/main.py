@@ -11,8 +11,10 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from src.config import BASE_DIR
 from src.exceptions import JobNotFoundError, register_exception_handlers
 from src.logging_config import get_logger
 from src.pipeline import run_talking_head_pipeline
@@ -200,6 +202,18 @@ def read_root():
         "name": "AI Talking Head Service",
         "status": "healthy",
     }
+
+
+@app.get("/test.html", include_in_schema=False)
+def serve_test_page():
+    test_html_path = BASE_DIR / "test.html"
+    if not test_html_path.is_file():
+        logger.warning(f"test.html not found at '{test_html_path}'")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="test.html not found",
+        )
+    return FileResponse(test_html_path, media_type="text/html")
 
 
 # ============================================================================
