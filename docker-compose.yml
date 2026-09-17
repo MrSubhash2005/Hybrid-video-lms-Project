@@ -3,13 +3,14 @@ version: '3.8'
 services:
   talking-head-service:
     build:
-      context: ./services/talking-head-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/talking-head-service/Dockerfile
     container_name: talking-head-service
     ports:
       - "8000:8000"
     volumes:
       - ./services/talking-head-service:/app
+      - ./Wav2Lip:/app/Wav2Lip:ro
       - ./shared:/app/shared
       - ./examples:/app/examples
     environment:
@@ -36,10 +37,12 @@ services:
       - ./services/animation-service:/app
       - ./shared:/app/shared
       - ./examples:/app/examples
+      - ./hybrid-output:/app/hybrid-output
     environment:
       - NODE_ENV=development
       - PORT=3000
       - SARVAM_API_KEY=${SARVAM_API_KEY}
+      - TALKING_HEAD_SERVICE_URL=http://talking-head-service:8000
 
     depends_on:
       - talking-head-service
