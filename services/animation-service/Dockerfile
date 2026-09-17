@@ -3,6 +3,7 @@ FROM node:18-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     chromium \
+    python3 \
     fonts-ipafont-gothic \
     fonts-wqy-zenhei \
     fonts-thai-tlwg \
@@ -15,7 +16,8 @@ WORKDIR /app
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
-    FFMPEG_PATH=/usr/bin/ffmpeg
+    FFMPEG_PATH=/usr/bin/ffmpeg \
+    PYTHON_PATH=python3
 
 COPY . .
 
