@@ -478,7 +478,6 @@ class _OfficialLatentSyncBackend:
                 pass
 
 
-
 class _Wav2LipBackend:
     """Run the local Wav2Lip inference.py as a subprocess.
 
@@ -506,15 +505,11 @@ class _Wav2LipBackend:
             progress_callback(10.0)
 
         if not self.wav2lip_dir.is_dir():
-            raise PipelineError(
-                f"Wav2Lip directory not found: '{self.wav2lip_dir}'"
-            )
+            raise PipelineError(f"Wav2Lip directory not found: '{self.wav2lip_dir}'")
 
         inference_script = self.wav2lip_dir / "inference.py"
         if not inference_script.is_file():
-            raise PipelineError(
-                f"Wav2Lip inference.py not found: '{inference_script}'"
-            )
+            raise PipelineError(f"Wav2Lip inference.py not found: '{inference_script}'")
 
         if not self.checkpoint_path.is_file():
             raise PipelineError(
@@ -559,7 +554,9 @@ class _Wav2LipBackend:
 
         logger.info(
             "Running Wav2Lip inference: --face='%s' --audio='%s' --outfile='%s'",
-            image, audio, output,
+            image,
+            audio,
+            output,
         )
 
         # ---------------------------------------------------------------
@@ -578,6 +575,7 @@ class _Wav2LipBackend:
         # imports (audio, face_detection, models) continue to resolve.
         # ---------------------------------------------------------------
         import shutil
+
         job_tmp_dir = tempfile.mkdtemp(prefix="wav2lip_run_")
         try:
             (Path(job_tmp_dir) / "temp").mkdir(parents=True, exist_ok=True)
@@ -605,7 +603,9 @@ class _Wav2LipBackend:
                     check=False,
                 )
             except Exception as exc:
-                raise PipelineError(f"Failed to start Wav2Lip subprocess: {exc}") from exc
+                raise PipelineError(
+                    f"Failed to start Wav2Lip subprocess: {exc}"
+                ) from exc
         finally:
             shutil.rmtree(job_tmp_dir, ignore_errors=True)
 
@@ -629,9 +629,7 @@ class _Wav2LipBackend:
             )
 
         if output.stat().st_size == 0:
-            raise PipelineError(
-                f"Wav2Lip created an empty output file: '{output}'"
-            )
+            raise PipelineError(f"Wav2Lip created an empty output file: '{output}'")
 
         return str(output)
 
