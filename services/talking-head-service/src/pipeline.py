@@ -669,13 +669,14 @@ class _OfficialLatentSyncBackend:
                 pass
 
 
-
 class _Wav2LipBackend:
     """Run the local Wav2Lip inference.py as a subprocess.
 
-    The subprocess is executed with ``cwd`` set to the Wav2Lip directory so
-    that ``inference.py``'s own relative imports (``audio``, ``face_detection``,
-    ``models``) resolve exactly as they do when the script is run manually.
+    The subprocess is executed with a per-job writable temp directory as its
+    CWD so that inference.py can create ``temp/result.avi`` without hitting
+    the read-only Wav2Lip volume mount that Docker uses in production.
+    ``wav2lip_dir`` is injected via PYTHONPATH so that inference.py's local
+    module imports (``audio``, ``face_detection``, ``models``) still resolve.
     No Wav2Lip source files are imported into the service process.
     """
 
@@ -695,15 +696,11 @@ class _Wav2LipBackend:
             progress_callback(10.0)
 
         if not self.wav2lip_dir.is_dir():
-            raise PipelineError(
-                f"Wav2Lip directory not found: '{self.wav2lip_dir}'"
-            )
+            raise PipelineError(f"Wav2Lip directory not found: '{self.wav2lip_dir}'")
 
         inference_script = self.wav2lip_dir / "inference.py"
         if not inference_script.is_file():
-            raise PipelineError(
-                f"Wav2Lip inference.py not found: '{inference_script}'"
-            )
+            raise PipelineError(f"Wav2Lip inference.py not found: '{inference_script}'")
 
         if not self.checkpoint_path.is_file():
             raise PipelineError(
@@ -746,18 +743,62 @@ class _Wav2LipBackend:
         if progress_callback:
             progress_callback(30.0)
 
-        logger.info("Running Wav2Lip inference")
+        logger.info(
+            "Running Wav2Lip inference: --face='%s' --audio='%s' --outfile='%s'",
+            image,
+            audio,
+            output,
+        )
 
+        # ---------------------------------------------------------------
+        # ROOT-CAUSE FIX: Wav2Lip's inference.py writes temp/result.avi
+        # relative to its CWD.  In Docker, the Wav2Lip directory is
+        # mounted read-only (./Wav2Lip:/app/Wav2Lip:ro).  cv2.VideoWriter
+        # silently fails when it cannot write to a read-only path, so
+        # inference.py falls through and ffmpeg merges the NEW audio with
+        # the STALE temp/result.avi left from a previous run — producing
+        # output that shows the wrong (old) face even though the correct
+        # uploaded image was passed via --face.
+        #
+        # Fix: run each subprocess from a fresh, per-job writable temp
+        # directory so temp/result.avi is always created from scratch.
+        # We add wav2lip_dir to PYTHONPATH so inference.py's local module
+        # imports (audio, face_detection, models) continue to resolve.
+        # ---------------------------------------------------------------
+        import shutil
+
+        job_tmp_dir = tempfile.mkdtemp(prefix="wav2lip_run_")
         try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(self.wav2lip_dir),
-                capture_output=True,
-                text=True,
-                check=False,
+            (Path(job_tmp_dir) / "temp").mkdir(parents=True, exist_ok=True)
+
+            env = os.environ.copy()
+            existing_pythonpath = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = (
+                str(self.wav2lip_dir) + os.pathsep + existing_pythonpath
+                if existing_pythonpath
+                else str(self.wav2lip_dir)
             )
-        except Exception as exc:
-            raise PipelineError(f"Failed to start Wav2Lip subprocess: {exc}") from exc
+
+            logger.info(
+                "Wav2Lip subprocess writable CWD: '%s' (PYTHONPATH includes wav2lip_dir)",
+                job_tmp_dir,
+            )
+
+            try:
+                result = subprocess.run(
+                    cmd,
+                    cwd=job_tmp_dir,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except Exception as exc:
+                raise PipelineError(
+                    f"Failed to start Wav2Lip subprocess: {exc}"
+                ) from exc
+        finally:
+            shutil.rmtree(job_tmp_dir, ignore_errors=True)
 
         if result.stdout:
             logger.info("Wav2Lip stdout:\n%s", result.stdout[-4000:])
@@ -779,9 +820,7 @@ class _Wav2LipBackend:
             )
 
         if output.stat().st_size == 0:
-            raise PipelineError(
-                f"Wav2Lip created an empty output file: '{output}'"
-            )
+            raise PipelineError(f"Wav2Lip created an empty output file: '{output}'")
 
         return str(output)
 

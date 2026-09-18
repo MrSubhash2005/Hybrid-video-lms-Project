@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Talking Head Demo</title>
+  <style>
+    :root {
+      --bg-color: #f8fafc;
+      --card-bg: #ffffff;
+      --border-color: #e2e8f0;
+      --text-main: #1e293b;
+      --text-muted: #64748b;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --primary-focus: rgba(37, 99, 235, 0.2);
+      --success: #16a34a;
+      --warning: #d97706;
+      --danger: #dc2626;
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      line-height: 1.5;
+      padding: 32px 16px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 680px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      padding: 28px;
+    }
+
+    .header {
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 16px;
+    }
+
+    .header h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .header p {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--text-main);
+      margin-bottom: 6px;
+    }
+
+    .helper-text {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .file-input-wrapper {
+      position: relative;
+    }
+
+    input[type="file"] {
+      display: block;
+      width: 100%;
+      padding: 8px 12px;
+      font-size: 0.875rem;
+      color: var(--text-main);
+      background-color: #f1f5f9;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+
+    input[type="file"]:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-focus);
+    }
+
+    select, input[type="text"] {
+      width: 100%;
+      padding: 8px 12px;
+      font-size: 0.875rem;
+      color: var(--text-main);
+      background-color: #f8fafc;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+    }
+
+    select:disabled {
+      background-color: #f1f5f9;
+      color: var(--text-muted);
+      cursor: not-allowed;
+    }
+
+    .file-preview {
+      margin-top: 8px;
+      display: none;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .preview-img {
+      width: 60px;
+      height: 60px;
+      object-fit: cover;
+      border-radius: 4px;
+      border: 1px solid var(--border-color);
+    }
+
+    .file-info {
+      font-size: 0.8125rem;
+      color: var(--text-main);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: 10px 16px;
+      font-size: 0.9375rem;
+      font-weight: 600;
+      color: #ffffff;
+      background-color: var(--primary);
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background-color 0.15s ease-in-out;
+    }
+
+    .btn:hover:not(:disabled) {
+      background-color: var(--primary-hover);
+    }
+
+    .btn:disabled {
+      background-color: #94a3b8;
+      cursor: not-allowed;
+    }
+
+    /* Alert / Error Box */
+    .alert {
+      display: none;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+    }
+
+    .alert-danger {
+      background-color: #fef2f2;
+      border: 1px solid #fecaca;
+      color: var(--danger);
+    }
+
+    /* Status Section */
+    .status-card {
+      display: none;
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .status-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .status-title {
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .badge-queued {
+      background-color: #fef3c7;
+      color: var(--warning);
+    }
+
+    .badge-processing {
+      background-color: #e0f2fe;
+      color: var(--primary);
+    }
+
+    .badge-completed {
+      background-color: #dcfce7;
+      color: var(--success);
+    }
+
+    .badge-failed {
+      background-color: #fee2e2;
+      color: var(--danger);
+    }
+
+    .progress-bar-container {
+      width: 100%;
+      height: 8px;
+      background-color: #e2e8f0;
+      border-radius: 9999px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background-color: var(--primary);
+      transition: width 0.3s ease;
+    }
+
+    .progress-text {
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* Video Player Section */
+    .result-section {
+      display: none;
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .result-section h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    video {
+      width: 100%;
+      max-height: 400px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border-color);
+      background-color: #000;
+      display: block;
+    }
+
+    .video-actions {
+      margin-top: 10px;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .btn-secondary {
+      background-color: #f1f5f9;
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      padding: 6px 12px;
+      font-size: 0.8125rem;
+      text-decoration: none;
+      border-radius: var(--radius);
+      display: inline-block;
+      font-weight: 500;
+    }
+
+    .btn-secondary:hover {
+      background-color: #e2e8f0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <header class="header">
+        <h1>AI Talking Head Demo</h1>
+        <p>Lip-sync avatar animation with Wav2Lip</p>
+      </header>
+
+      <!-- Error message container -->
+      <div id="errorAlert" class="alert alert-danger" role="alert"></div>
+
+      <form id="avatarForm" onsubmit="event.preventDefault();">
+        <!-- Face Image input -->
+        <div class="form-group">
+          <label for="faceImage">Face Image</label>
+          <div class="file-input-wrapper">
+            <input
+              type="file"
+              id="faceImage"
+              accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+            />
+          </div>
+          <p class="helper-text">Select a JPG or PNG portrait photo with a clear face</p>
+          <div id="imagePreviewContainer" class="file-preview">
+            <img id="imagePreview" class="preview-img" alt="Face preview" />
+            <span id="imageFileName" class="file-info"></span>
+          </div>
+        </div>
+
+        <!-- Audio input -->
+        <div class="form-group">
+          <label for="audioFile">Audio</label>
+          <div class="file-input-wrapper">
+            <input
+              type="file"
+              id="audioFile"
+              accept=".wav,.mp3,.ogg,.flac,.m4a,audio/*"
+            />
+          </div>
+          <p class="helper-text">Select speech audio (WAV, MP3, M4A)</p>
+          <div id="audioPreviewContainer" class="file-preview">
+            <audio id="audioPreview" controls style="width: 100%; max-width: 320px;"></audio>
+            <span id="audioFileName" class="file-info"></span>
+          </div>
+        </div>
+
+        <!-- Model selection -->
+        <div class="form-group">
+          <label for="modelSelect">Model</label>
+          <select id="modelSelect" disabled>
+            <option value="wav2lip" selected>Wav2Lip</option>
+          </select>
+          <p class="helper-text">Verified lip-sync model backend</p>
+        </div>
+
+        <!-- Submit button -->
+        <button type="button" id="generateBtn" class="btn">
+          Generate Talking Head
+        </button>
+      </form>
+
+      <!-- Status and Progress -->
+      <div id="statusCard" class="status-card">
+        <div class="status-header">
+          <span class="status-title">Job Status</span>
+          <span id="statusBadge" class="status-badge badge-queued">Queued</span>
+        </div>
+        <div class="progress-bar-container">
+          <div id="progressBar" class="progress-bar"></div>
+        </div>
+        <div class="progress-text">
+          <span id="statusMessage">Waiting to start...</span>
+          <span id="progressPercent">0%</span>
+        </div>
+      </div>
+
+      <!-- Generated Video Output -->
+      <div id="resultSection" class="result-section">
+        <h2>Generated Video</h2>
+        <video id="outputVideo" controls playsinline></video>
+        <div class="video-actions">
+          <a id="downloadLink" class="btn-secondary" href="#" download="talking_head.mp4">
+            Download MP4
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const faceImageInput = document.getElementById('faceImage');
+    const audioFileInput = document.getElementById('audioFile');
+    const generateBtn = document.getElementById('generateBtn');
+    const errorAlert = document.getElementById('errorAlert');
+
+    const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+    const imagePreview = document.getElementById('imagePreview');
+    const imageFileName = document.getElementById('imageFileName');
+
+    const audioPreviewContainer = document.getElementById('audioPreviewContainer');
+    const audioPreview = document.getElementById('audioPreview');
+    const audioFileName = document.getElementById('audioFileName');
+
+    const statusCard = document.getElementById('statusCard');
+    const statusBadge = document.getElementById('statusBadge');
+    const progressBar = document.getElementById('progressBar');
+    const statusMessage = document.getElementById('statusMessage');
+    const progressPercent = document.getElementById('progressPercent');
+
+    const resultSection = document.getElementById('resultSection');
+    const outputVideo = document.getElementById('outputVideo');
+    const downloadLink = document.getElementById('downloadLink');
+
+    let pollInterval = null;
+
+    // Show error helper
+    function showError(message) {
+      errorAlert.textContent = message;
+      errorAlert.style.display = 'block';
+    }
+
+    // Hide error helper
+    function hideError() {
+      errorAlert.textContent = '';
+      errorAlert.style.display = 'none';
+    }
+
+    // Face image preview handler
+    faceImageInput.addEventListener('change', (e) => {
+      hideError();
+      const file = e.target.files[0];
+      if (file) {
+        imageFileName.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          imagePreview.src = event.target.result;
+          imagePreviewContainer.style.display = 'flex';
+        };
+        reader.readAsDataURL(file);
+      } else {
+        imagePreviewContainer.style.display = 'none';
+        imagePreview.src = '';
+        imageFileName.textContent = '';
+      }
+    });
+
+    // Audio preview handler
+    audioFileInput.addEventListener('change', (e) => {
+      hideError();
+      const file = e.target.files[0];
+      if (file) {
+        audioFileName.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+        const url = URL.createObjectURL(file);
+        audioPreview.src = url;
+        audioPreviewContainer.style.display = 'block';
+      } else {
+        audioPreviewContainer.style.display = 'none';
+        audioPreview.src = '';
+        audioFileName.textContent = '';
+      }
+    });
+
+    // Update status badge display
+    function updateStatusUI(status, progress, message) {
+      statusCard.style.display = 'block';
+      const pct = Math.max(0, Math.min(100, Math.round(progress || 0)));
+      progressBar.style.width = pct + '%';
+      progressPercent.textContent = pct + '%';
+
+      statusBadge.className = 'status-badge';
+
+      if (status === 'queued') {
+        statusBadge.classList.add('badge-queued');
+        statusBadge.textContent = 'Queued';
+        statusMessage.textContent = message || 'Job queued in background...';
+      } else if (status === 'processing') {
+        statusBadge.classList.add('badge-processing');
+        statusBadge.textContent = 'Processing';
+        statusMessage.textContent = message || 'Rendering lip-synced video with Wav2Lip...';
+      } else if (status === 'completed') {
+        statusBadge.classList.add('badge-completed');
+        statusBadge.textContent = 'Completed';
+        statusMessage.textContent = message || 'Avatar video generation completed successfully!';
+      } else if (status === 'failed') {
+        statusBadge.classList.add('badge-failed');
+        statusBadge.textContent = 'Failed';
+        statusMessage.textContent = message || 'Job execution failed.';
+      }
+    }
+
+    // Stop polling
+    function stopPolling() {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+      generateBtn.disabled = false;
+      generateBtn.textContent = 'Generate Talking Head';
+    }
+
+    // Poll job status endpoint
+    function pollJobStatus(jobId) {
+      pollInterval = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/v1/avatar/jobs/${jobId}`);
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || `Server returned status ${res.status}`);
+          }
+
+          const data = await res.json();
+          const status = (data.status || '').toLowerCase();
+          const progress = typeof data.progress === 'number' ? data.progress : 0;
+
+          if (status === 'completed') {
+            stopPolling();
+            updateStatusUI('completed', 100, 'Video ready');
+
+            if (data.output_url) {
+              outputVideo.src = data.output_url;
+              downloadLink.href = data.output_url;
+              resultSection.style.display = 'block';
+              outputVideo.load();
+              outputVideo.scrollIntoView({ behavior: 'smooth' });
+            } else {
+              showError('Job completed but output URL is missing.');
+            }
+          } else if (status === 'failed') {
+            stopPolling();
+            updateStatusUI('failed', 0, 'Generation failed');
+            showError(data.error_message || 'Video generation failed in pipeline.');
+          } else {
+            // queued or processing
+            updateStatusUI(status, progress);
+          }
+        } catch (err) {
+          stopPolling();
+          updateStatusUI('failed', 0, 'Polling error');
+          showError(`Failed to fetch job status: ${err.message}`);
+        }
+      }, 1500);
+    }
+
+    // Generate button click handler
+    generateBtn.addEventListener('click', async () => {
+      hideError();
+
+      const faceFile = faceImageInput.files[0];
+      const audioFile = audioFileInput.files[0];
+
+      // Validate inputs
+      if (!faceFile) {
+        showError('Please select a face image (JPG or PNG).');
+        faceImageInput.focus();
+        return;
+      }
+
+      if (!audioFile) {
+        showError('Please select an audio file (WAV, MP3, etc.).');
+        audioFileInput.focus();
+        return;
+      }
+
+      // Reset result section
+      resultSection.style.display = 'none';
+      outputVideo.src = '';
+
+      // Prepare form data
+      const formData = new FormData();
+      formData.append('face_image', faceFile);
+      formData.append('audio', audioFile);
+      formData.append('model', 'wav2lip');
+
+      // Update UI to indicate start
+      generateBtn.disabled = true;
+      generateBtn.textContent = 'Submitting job...';
+      updateStatusUI('queued', 0, 'Submitting request to API...');
+
+      try {
+        const response = await fetch('/api/v1/avatar/generate', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = errData.detail || errData.message || `API error (${response.status})`;
+          throw new Error(errMsg);
+        }
+
+        const data = await response.json();
+        const jobId = data.job_id;
+
+        if (!jobId) {
+          throw new Error('API did not return a valid job ID.');
+        }
+
+        generateBtn.textContent = 'Generating...';
+        updateStatusUI('queued', 5, `Job queued (${jobId}). Waiting for processing...`);
+        pollJobStatus(jobId);
+      } catch (err) {
+        stopPolling();
+        updateStatusUI('failed', 0, 'Submission failed');
+        showError(`API request failed: ${err.message}`);
+      }
+    });
+  </script>
+</body>
+</html>
